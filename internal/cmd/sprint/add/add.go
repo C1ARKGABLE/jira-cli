@@ -2,6 +2,7 @@ package add
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -11,6 +12,7 @@ import (
 	"github.com/ankitpokhrel/jira-cli/api"
 	"github.com/ankitpokhrel/jira-cli/internal/cmdutil"
 	"github.com/ankitpokhrel/jira-cli/internal/query"
+	"github.com/ankitpokhrel/jira-cli/pkg/jira"
 )
 
 const (
@@ -37,7 +39,8 @@ func NewCmdAdd() *cobra.Command {
 func add(cmd *cobra.Command, args []string) {
 	server := viper.GetString("server")
 	project := viper.GetString("project.key")
-	params := parseFlags(cmd.Flags(), args, project)
+	boardID := viper.GetInt("board.id")
+	params := parseFlags(cmd.Flags(), args, project, boardID)
 	client := api.DefaultClient(params.debug)
 
 	qs := getQuestions(params)
@@ -73,26 +76,58 @@ func add(cmd *cobra.Command, args []string) {
 	cmdutil.Success(fmt.Sprintf("Issues added to the sprint %s\n%s", params.sprintID, cmdutil.GenerateServerBrowseURL(server, project)))
 }
 
-func parseFlags(flags query.FlagParser, args []string, project string) *addParams {
+func parseFlags(flags query.FlagParser, args []string, project string, boardID int) *addParams {
 	var (
 		sprintID string
 		issues   []string
+		tickets  []string
 	)
 
-	nArgs := len(args)
-	if nArgs > 0 {
-		sprintID = args[0]
-	}
-	if nArgs > 1 {
-		tickets := args[1:]
-		issues = make([]string, 0, len(tickets))
-		for _, iss := range tickets {
-			issues = append(issues, cmdutil.GetJiraIssueKey(project, iss))
-		}
-	}
+	next, err := flags.GetBool("next")
+	cmdutil.ExitIfError(err)
+
+	prev, err := flags.GetBool("prev")
+	cmdutil.ExitIfError(err)
+
+	current, err := flags.GetBool("current")
+	cmdutil.ExitIfError(err)
 
 	debug, err := flags.GetBool("debug")
 	cmdutil.ExitIfError(err)
+
+	sprintQuery, err := query.NewSprint(flags)
+	cmdutil.ExitIfError(err)
+	nArgs := len(args)
+
+	if next || prev || current {
+		sprints := func() []*jira.Sprint {
+
+			s := cmdutil.Info("Fetching sprints...")
+			defer s.Stop()
+			client := api.DefaultClient(debug)
+
+			return client.SprintsInBoards([]int{boardID}, sprintQuery.Get(), 50)
+		}()
+		sprint := sprints[0]
+		if next {
+			sprint = sprints[len(sprints)-1]
+		}
+		sprintID = strconv.Itoa(sprint.ID)
+		if nArgs > 0 {
+			tickets = args
+		}
+	} else {
+		if nArgs > 0 {
+			sprintID = args[0]
+		}
+		if nArgs > 1 {
+			tickets = args[1:]
+		}
+	}
+	issues = make([]string, 0, len(tickets))
+	for _, iss := range tickets {
+		issues = append(issues, cmdutil.GetJiraIssueKey(project, iss))
+	}
 
 	return &addParams{
 		sprintID: sprintID,
@@ -123,6 +158,15 @@ func getQuestions(params *addParams) []*survey.Question {
 	}
 
 	return qs
+}
+func setFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("current", false, "List issues in current active sprint")
+	cmd.Flags().Bool("prev", false, "List issues in previous sprint")
+	cmd.Flags().Bool("next", false, "List issues in next planned sprint")
+}
+func SetFlags(cmd *cobra.Command) {
+	setFlags(cmd)
+	// hideFlags(cmd)
 }
 
 type addParams struct {

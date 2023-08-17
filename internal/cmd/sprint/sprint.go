@@ -26,6 +26,7 @@ func NewCmdSprint() *cobra.Command {
 	cmd.AddCommand(lc, ac)
 
 	list.SetFlags(lc)
+	add.SetFlags(ac)
 
 	return &cmd
 }
